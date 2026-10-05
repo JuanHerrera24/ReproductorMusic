@@ -4,6 +4,7 @@
   "description": "Taller de Listas Dobles: reproductor de música en TypeScript",
   "scripts": {
     "build": "tsc",
+    "start": "npx serve .",
     "watch": "tsc --watch"
   },
   "devDependencies": {
