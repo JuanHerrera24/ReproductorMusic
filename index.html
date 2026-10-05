@@ -31,6 +31,52 @@
       <section class="left-col">
         <article class="card player" id="player" aria-live="polite"></article>
 
+        <!-- YouTube player: must stay visible while a YouTube song is playing -->
+        <article class="card yt-card" id="yt-wrap" hidden>
+          <div class="yt-frame"><div id="yt-player"></div></div>
+        </article>
+
+        <article class="card yt-search-card">
+          <h2 class="card-title">Buscar en YouTube</h2>
+          <p class="yt-file-warning" id="yt-file-warning" hidden>
+            Estás abriendo la página con doble clic. Para que YouTube funcione ábrela desde un servidor local
+            (<code>npx serve</code> o la extensión Live Server de VS Code).
+          </p>
+          <form id="yt-search-form" class="inline-form">
+            <input id="yt-query" type="search" placeholder="Nombre de la canción o artista…" required />
+            <button class="btn primary compact" type="submit">Buscar</button>
+          </form>
+          <p class="yt-status" id="yt-status"></p>
+          <ul class="yt-results" id="yt-results"></ul>
+
+          <label class="field inline">
+            <span>Agregar al</span>
+            <select id="yt-position">
+              <option value="end">Final de la lista</option>
+              <option value="start">Inicio de la lista</option>
+            </select>
+          </label>
+
+          <form id="yt-link-form" class="inline-form">
+            <input id="yt-link" type="text" placeholder="Pega un enlace de video o de playlist de YouTube" required />
+            <button class="btn ghost compact" type="submit">Agregar</button>
+          </form>
+
+          <details class="yt-key" id="yt-key-details">
+            <summary>API key de YouTube <span id="yt-key-state"></span></summary>
+            <ol>
+              <li>Entra a <b>console.cloud.google.com</b> y crea un proyecto.</li>
+              <li>Busca <b>YouTube Data API v3</b> y pulsa <b>Habilitar</b>.</li>
+              <li>Ve a <b>Credenciales → Crear credenciales → Clave de API</b>.</li>
+              <li>Pega la clave aquí abajo. Solo se guarda en este navegador.</li>
+            </ol>
+            <form id="yt-key-form" class="inline-form">
+              <input id="yt-key" type="password" placeholder="Pega tu API key" autocomplete="off" />
+              <button class="btn ghost compact" type="submit">Guardar</button>
+            </form>
+          </details>
+        </article>
+
         <article class="card files-card">
           <h2 class="card-title">Música de tu PC</h2>
           <button class="dropzone" type="button" data-action="pick-files">
@@ -61,7 +107,7 @@
             </label>
             <label class="field">
               <span>Enlace directo al .mp3</span>
-              <input id="f-url" type="url" placeholder="https://…/cancion.mp3" required />
+              <input id="f-url" type="url" placeholder="https://…/song.mp3" required />
             </label>
             <label class="field">
               <span>¿Dónde insertarla?</span>
@@ -120,11 +166,16 @@
 
   <div id="toasts" class="toasts" aria-live="polite"></div>
 
+  <!-- Order matters: each script depends on the previous ones -->
   <script src="dist/types.js"></script>
   <script src="dist/utils.js"></script>
   <script src="dist/storage.js"></script>
   <script src="dist/DoublyLinkedList.js"></script>
+  <script src="dist/engines.js"></script>
+  <script src="dist/YouTubeEngine.js"></script>
   <script src="dist/MusicPlayer.js"></script>
+  <script src="dist/config.js"></script>
+  <script src="dist/youtubeApi.js"></script>
   <script src="dist/defaultTracks.js"></script>
   <script src="dist/App.js"></script>
   <script src="dist/main.js"></script>

@@ -1,4 +1,13 @@
 "use strict";
+/**
+ * ============================================================
+ *  FILE STORE (IndexedDB)
+ * ============================================================
+ *  Audio files from the PC do not fit in localStorage, so they are
+ *  stored as Blobs in IndexedDB. That way the music stays in the list
+ *  after reloading the page. No method throws: if IndexedDB is not
+ *  available, local music simply lasts only for the session.
+ */
 class FileStore {
     constructor() {
         this.dbPromise = null;
@@ -27,6 +36,7 @@ class FileStore {
             return undefined;
         }
     }
+    /** Stores a file. Returns false if it could not be saved. */
     async put(id, blob) {
         return (await this.run("readwrite", (s) => s.put(blob, id))) !== undefined;
     }

@@ -1,4 +1,15 @@
 "use strict";
+/**
+ * ============================================================
+ *  PLAYER LOGIC (independent from the interface)
+ * ============================================================
+ *  Uses a DoublyLinkedList<Song> as the playlist and a `current`
+ *  pointer to the node that is playing. Skipping forward and going back
+ *  are simply following `current.next` or `current.prev` (O(1)).
+ *
+ *  The sound is produced by a PlaybackEngine: a real HTMLAudioElement for
+ *  mp3 files and YouTube's embedded player for YouTube songs.
+ */
 class MusicPlayer {
     constructor() {
         this.playlist = new DoublyLinkedList();
@@ -7,21 +18,21 @@ class MusicPlayer {
         this.elapsed = 0;
         this.repeat = "off";
         this.volume = 0.8;
+        /** Called when the state changes (list, song, play/pause...). */
         this.onChange = () => { };
+        /** Called while playing (only updates the progress). */
         this.onTick = () => { };
+        /** Called to show notices to the user. */
         this.onNotice = () => { };
-        this.audio = new Audio();
+        /** id of the song that is loaded in the active engine. */
         this.loadedId = null;
-        this.audio.preload = "metadata";
-        this.audio.volume = this.volume;
-        this.audio.addEventListener("timeupdate", () => {
-            this.elapsed = this.audio.currentTime;
-            this.onTick();
-        });
-        this.audio.addEventListener("loadedmetadata", () => this.syncDuration());
-        this.audio.addEventListener("ended", () => this.handleEnded());
-        this.audio.addEventListener("error", () => this.handleError());
+        this.audioEngine = new AudioEngine(this.eventsFor(() => this.audioEngine));
+        this.youtubeEngine = new YouTubeEngine("yt-player", this.eventsFor(() => this.youtubeEngine));
+        this.engine = this.audioEngine;
+        this.setVolume(this.volume);
     }
+    // ---------------------- Playlist ----------------------
+    /** Replaces the whole list (no notices). Used when the app starts. */
     load(songs, currentId) {
         this.release();
         this.isPlaying = false;
@@ -32,6 +43,7 @@ class MusicPlayer {
         this.ensureLoaded();
         this.onChange();
     }
+    /** Adds a song at the start, at the end or at any position. */
     add(song, position) {
         let node;
         switch (position.kind) {
@@ -52,9 +64,10 @@ class MusicPlayer {
         this.onChange();
         return node;
     }
+    /** Removes a song. If it was the current one, moves to the next (or previous) one. */
     remove(node) {
         const wasCurrent = node === this.current;
-        const fallback = node.next ?? node.prev;
+        const fallback = node.next ?? node.prev; // computed BEFORE unlinking
         this.playlist.removeNode(node);
         if (wasCurrent) {
             this.current = fallback;
@@ -69,6 +82,7 @@ class MusicPlayer {
         }
         this.onChange();
     }
+    /** Moves a song up (-1) or down (+1) inside the list. */
     shift(node, direction) {
         const index = this.playlist.indexOf(node);
         const target = index + direction;
@@ -99,6 +113,7 @@ class MusicPlayer {
             total += n.value.duration;
         return total;
     }
+    // ---------------------- Playback ----------------------
     play() {
         if (!this.current)
             return;
@@ -108,7 +123,7 @@ class MusicPlayer {
         this.onChange();
     }
     pause() {
-        this.audio.pause();
+        this.engine.pause();
         if (this.isPlaying) {
             this.isPlaying = false;
             this.onChange();
@@ -122,13 +137,14 @@ class MusicPlayer {
         this.isPlaying ? this.pause() : this.play();
     }
     stop() {
-        this.audio.pause();
+        this.engine.pause();
         this.isPlaying = false;
         this.elapsed = 0;
         if (this.loadedId)
-            this.audio.currentTime = 0;
+            this.engine.seek(0);
         this.onChange();
     }
+    /** Plays a specific node directly. */
     playNode(node) {
         this.current = node;
         this.elapsed = 0;
@@ -136,6 +152,7 @@ class MusicPlayer {
         this.afterTrackChange();
         this.onChange();
     }
+    /** SKIP FORWARD: moves to the next node. Returns false if there is none. */
     next() {
         if (!this.current)
             return false;
@@ -150,6 +167,7 @@ class MusicPlayer {
         this.onChange();
         return true;
     }
+    /** GO BACK: moves to the previous node. Returns false if there is none. */
     prev() {
         if (!this.current)
             return false;
@@ -167,53 +185,102 @@ class MusicPlayer {
     seek(seconds) {
         if (!this.current || !this.loadedId)
             return;
-        const max = Number.isFinite(this.audio.duration) ? this.audio.duration : this.current.value.duration;
-        this.audio.currentTime = Math.min(Math.max(0, seconds), max);
-        this.elapsed = this.audio.currentTime;
+        const clamped = Math.min(Math.max(0, seconds), this.current.value.duration || seconds);
+        this.engine.seek(clamped);
+        this.elapsed = clamped;
         this.onTick();
     }
     setVolume(volume) {
         this.volume = Math.min(1, Math.max(0, volume));
-        this.audio.volume = this.volume;
+        this.audioEngine.setVolume(this.volume);
+        this.youtubeEngine.setVolume(this.volume);
     }
     cycleRepeat() {
         const order = ["off", "all", "one"];
         this.repeat = order[(order.indexOf(this.repeat) + 1) % order.length];
         this.onChange();
     }
+    // ---------------------- Internals ----------------------
+    /** Builds the event handlers of an engine; events from an inactive engine are ignored. */
+    eventsFor(getEngine) {
+        const active = () => getEngine() === this.engine;
+        return {
+            onTime: (seconds) => {
+                if (!active())
+                    return;
+                this.elapsed = seconds;
+                this.onTick();
+            },
+            onDuration: (seconds) => {
+                if (active())
+                    this.syncDuration(seconds);
+            },
+            onEnded: () => {
+                if (active())
+                    this.handleEnded();
+            },
+            onError: (message) => {
+                if (active())
+                    this.handleError(message);
+            },
+            onStalled: () => {
+                if (!active() || !this.isPlaying)
+                    return;
+                this.isPlaying = false;
+                this.onNotice("YouTube no arrancó solo. Pulsa el botón de play dentro del cuadro de YouTube", "warn");
+                this.onChange();
+            },
+            onPlayState: (playing) => {
+                if (!active() || playing === this.isPlaying)
+                    return;
+                this.isPlaying = playing;
+                this.onChange();
+            },
+        };
+    }
+    /** Picks the engine that can play a song. */
+    engineFor(song) {
+        return song.youtubeId ? this.youtubeEngine : this.audioEngine;
+    }
+    /** Loads the current song into its engine (if it was not loaded already). */
     ensureLoaded() {
         const song = this.current?.value;
-        if (!song)
+        if (!song || this.loadedId === song.id)
             return;
-        if (this.loadedId !== song.id) {
-            this.audio.src = song.src;
-            this.loadedId = song.id;
+        const target = this.engineFor(song);
+        if (target !== this.engine) {
+            this.engine.release(); // silence the previous engine before switching
+            this.engine = target;
         }
+        this.engine.load(song);
+        this.loadedId = song.id;
     }
+    /** After changing node: loads the song, restarts it and keeps playing if it was playing. */
     afterTrackChange() {
         this.ensureLoaded();
-        this.audio.currentTime = 0;
+        this.engine.seek(0);
         if (this.isPlaying)
             this.requestPlay();
     }
     requestPlay() {
-        this.audio.play().catch((err) => {
+        this.engine.play().catch((err) => {
             if (err.name === "AbortError")
-                return;
+                return; // the song was changed while loading
             this.isPlaying = false;
             this.onNotice("No se pudo reproducir esta canción", "warn");
             this.onChange();
         });
     }
+    /** Releases both engines (when no song is loaded anymore). */
     release() {
-        this.audio.pause();
+        this.audioEngine.release();
+        this.youtubeEngine.release();
+        this.engine = this.audioEngine;
         this.loadedId = null;
-        this.audio.removeAttribute("src");
-        this.audio.load();
     }
-    syncDuration() {
+    /** The real duration of the file wins over the stored one. */
+    syncDuration(real) {
         const song = this.current?.value;
-        const real = this.audio.duration;
         if (song && Number.isFinite(real) && Math.abs(song.duration - real) > 1) {
             song.duration = Math.round(real);
             this.onChange();
@@ -221,26 +288,26 @@ class MusicPlayer {
     }
     handleEnded() {
         if (this.repeat === "one") {
-            this.audio.currentTime = 0;
+            this.engine.seek(0);
             this.requestPlay();
         }
         else if (this.current && (this.current.next || this.repeat === "all")) {
-            this.next();
+            this.next(); // isPlaying is still true, so it keeps playing
         }
         else {
             this.isPlaying = false;
             this.elapsed = 0;
-            this.audio.currentTime = 0;
+            this.engine.seek(0);
             this.onNotice("Fin de la lista de reproducción", "info");
             this.onChange();
         }
     }
-    handleError() {
+    handleError(message) {
         if (!this.loadedId)
-            return;
+            return; // error caused by releasing the engine
         const title = this.current?.value.title ?? "la canción";
         this.isPlaying = false;
-        this.onNotice(`No se pudo cargar «${title}»`, "warn");
+        this.onNotice(message || `No se pudo cargar «${title}»`, "warn");
         this.onChange();
     }
 }

@@ -1,4 +1,11 @@
 "use strict";
+/**
+ * ============================================================
+ *  USER INTERFACE (Frontend)
+ * ============================================================
+ *  Renders the MusicPlayer state into the DOM and translates
+ *  user actions into calls to the player.
+ */
 const ICONS = {
     play: '<svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.52.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86A1 1 0 0 0 8 5.14z"/></svg>',
     pause: '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4.5" height="16" rx="1.5"/><rect x="13.5" y="4" width="4.5" height="16" rx="1.5"/></svg>',
@@ -19,6 +26,8 @@ class App {
     constructor() {
         this.player = new MusicPlayer();
         this.files = new FileStore();
+        this.youtube = new YouTubeApi();
+        this.ytResults = [];
         this.query = "";
         this.editingId = null;
         this.warnedPersist = false;
@@ -35,28 +44,31 @@ class App {
             if (!isNaN(v))
                 this.player.setVolume(v);
         }
-        catch { }
+        catch { /* sin almacenamiento */ }
         this.bindEvents();
+        this.renderYouTubePanel();
         const saved = this.readSaved();
         const songs = saved ? await this.hydrate(saved.songs, saved.defaultsVersion) : this.defaultSongs();
         this.player.load(songs, saved?.currentId);
         this.fillDurations();
     }
+    /** Turns the default tracks into Song objects. */
     defaultSongs() {
         return DEFAULT_TRACKS.map((t) => ({
             id: uid(),
             title: t.title,
             artist: t.artist,
-            duration: 0,
+            duration: 0, // discovered when the audio metadata loads
             hue: hueFrom(t.title),
             src: t.url,
             builtin: true,
         }));
     }
+    /** Fills in the duration of songs that do not have one yet. */
     fillDurations() {
         for (const node of this.player.playlist.nodes()) {
             const song = node.value;
-            if (song.duration > 0)
+            if (song.duration > 0 || song.youtubeId)
                 continue;
             readDuration(song.src).then((d) => {
                 if (d > 0 && song.duration === 0) {
@@ -66,7 +78,11 @@ class App {
             });
         }
     }
+    // =========================================================
+    //  Events
+    // =========================================================
     bindEvents() {
+        // Click delegation for every button with a data-action attribute
         document.addEventListener("click", (e) => {
             const target = e.target.closest("[data-action]");
             if (!target)
@@ -127,11 +143,15 @@ class App {
                         this.toast("Lista por defecto restaurada", "success");
                     }
                     break;
+                case "yt-add":
+                    this.addYouTubeResult(parseInt(target.dataset.index ?? "-1", 10));
+                    break;
                 case "pick-files":
                     document.querySelector("#file-input").click();
                     break;
             }
         });
+        // Progress bar (seek inside the song)
         document.addEventListener("click", (e) => {
             const bar = e.target.closest("#progress");
             if (!bar || !this.player.current)
@@ -140,6 +160,7 @@ class App {
             const ratio = (e.clientX - rect.left) / rect.width;
             this.player.seek(ratio * this.player.current.value.duration);
         });
+        // Volume
         document.addEventListener("input", (e) => {
             const el = e.target;
             if (el.id !== "volume")
@@ -148,18 +169,21 @@ class App {
             try {
                 localStorage.setItem(VOLUME_KEY, String(this.player.volume));
             }
-            catch { }
+            catch { /* ignorar */ }
         });
+        // Search box
         document.querySelector("#search").addEventListener("input", (e) => {
             this.query = e.target.value.trim().toLowerCase();
             this.renderPlaylist();
         });
+        // PC files: file picker
         const fileInput = document.querySelector("#file-input");
         fileInput.addEventListener("change", () => {
             if (fileInput.files?.length)
                 void this.addFiles(Array.from(fileInput.files));
-            fileInput.value = "";
+            fileInput.value = ""; // lets the user pick the same files again
         });
+        // PC files: drag and drop anywhere on the page
         let dragDepth = 0;
         const hasFiles = (e) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
         window.addEventListener("dragenter", (e) => {
@@ -188,6 +212,7 @@ class App {
             if (e.dataTransfer?.files.length)
                 void this.addFiles(Array.from(e.dataTransfer.files));
         });
+        // Form: add by link
         const form = document.querySelector("#add-form");
         const posSelect = form.querySelector("#f-position");
         const posField = form.querySelector("#f-index-field");
@@ -198,12 +223,31 @@ class App {
             e.preventDefault();
             void this.handleAddLink(form);
         });
+        // YouTube: search, paste link / playlist, API key
+        document.querySelector("#yt-search-form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            void this.searchYouTube();
+        });
+        document.querySelector("#yt-link-form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            void this.addYouTubeLink();
+        });
+        document.querySelector("#yt-key-form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            const input = document.querySelector("#yt-key");
+            this.youtube.setKey(input.value.trim());
+            input.value = "";
+            this.renderYouTubePanel();
+            this.toast(this.youtube.hasKey() ? "API key guardada en este navegador" : "API key eliminada", "success");
+        });
+        // Edit dialog
         const dialog = document.querySelector("#edit-dialog");
         dialog.querySelector("form").addEventListener("submit", (e) => {
             e.preventDefault();
             this.saveEdit(dialog);
         });
         dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+        // Keyboard shortcuts
         document.addEventListener("keydown", (e) => {
             if (document.querySelector("dialog[open]"))
                 return;
@@ -220,6 +264,10 @@ class App {
                 this.player.prev();
         });
     }
+    // =========================================================
+    //  Adding songs
+    // =========================================================
+    /** Adds audio files from the user's PC (no limit on the amount). */
     async addFiles(files) {
         const isAudio = (f) => f.type.startsWith("audio/") || /\.(mp3|m4a|wav|ogg|oga|flac|aac|opus|weba)$/i.test(f.name);
         const audioFiles = files.filter(isAudio);
@@ -247,12 +295,14 @@ class App {
                 this.warnedPersist = true;
                 this.toast("Tu navegador no permitió guardar los archivos: la música local durará solo esta sesión", "warn");
             }
+            // When inserting at the start, the selection order is kept: 0, 1, 2…
             this.player.add(song, atStart ? { kind: "index", index: added } : { kind: "end" });
             added++;
         }
         if (added)
             this.toast(`${added} canción(es) agregada(s) ${atStart ? "al inicio" : "al final"}`, "success");
     }
+    /** Adds a song from a direct link to an mp3 file. */
     async handleAddLink(form) {
         const val = (id) => form.querySelector(id).value.trim();
         const title = val("#f-title");
@@ -297,6 +347,7 @@ class App {
         if (duration <= 0) {
             return this.toast("No se pudo cargar ese enlace. Verifica que apunte directo a un archivo de audio", "warn");
         }
+        // The list may have changed while the link was being verified
         if (position.kind === "index")
             position = { kind: "index", index: Math.min(position.index, this.player.playlist.size) };
         this.player.add({ id: uid(), title, artist, duration, hue: hueFrom(title), src: url }, position);
@@ -306,6 +357,112 @@ class App {
         form.querySelector("#f-url").value = "";
         form.querySelector("#f-title").focus();
     }
+    // =========================================================
+    //  YouTube
+    // =========================================================
+    /** Shows the key state, the file:// warning and the initial hint. */
+    renderYouTubePanel(message) {
+        this.setText("#yt-key-state", this.youtube.hasKey() ? "· configurada ✓" : "· falta");
+        document.querySelector("#yt-file-warning").hidden = location.protocol !== "file:";
+        this.setText("#yt-status", message ??
+            (this.youtube.hasKey()
+                ? ""
+                : "Para buscar por nombre pega tu API key (abajo). Pegar enlaces funciona sin ella."));
+    }
+    async searchYouTube() {
+        const query = document.querySelector("#yt-query").value.trim();
+        if (!query)
+            return;
+        if (!this.youtube.hasKey()) {
+            this.renderYouTubePanel("Necesitas una API key para buscar por nombre. Ábrela en «API key de YouTube».");
+            document.querySelector("#yt-key-details").open = true;
+            return;
+        }
+        this.renderYouTubePanel("Buscando…");
+        this.ytResults = [];
+        this.renderYouTubeResults();
+        try {
+            this.ytResults = await this.youtube.search(query);
+            this.renderYouTubePanel(this.ytResults.length ? "" : "No se encontraron videos reproducibles para esa búsqueda");
+            this.renderYouTubeResults();
+        }
+        catch (err) {
+            this.renderYouTubePanel(err.message);
+        }
+    }
+    renderYouTubeResults() {
+        const host = document.querySelector("#yt-results");
+        host.innerHTML = this.ytResults
+            .map((v, i) => `
+        <li class="yt-result">
+          <img src="https://i.ytimg.com/vi/${v.id}/mqdefault.jpg" alt="" loading="lazy" />
+          <div class="yt-info"><strong>${escapeHtml(v.title)}</strong><small>${escapeHtml(v.channel)} · ${formatDuration(v.duration)}</small></div>
+          <button class="btn ghost small" data-action="yt-add" data-index="${i}">+ Agregar</button>
+        </li>`)
+            .join("");
+    }
+    addYouTubeResult(index) {
+        const video = this.ytResults[index];
+        if (video)
+            this.addYouTubeVideos([video]);
+    }
+    /** Adds a video link, or a whole playlist when the link points to one. */
+    async addYouTubeLink() {
+        const input = document.querySelector("#yt-link");
+        const text = input.value.trim();
+        const videoId = YouTubeApi.parseVideoId(text);
+        const playlistId = YouTubeApi.parsePlaylistId(text);
+        const button = document.querySelector("#yt-link-form button");
+        if (!videoId && !playlistId)
+            return this.toast("Ese enlace no parece ser de YouTube", "warn");
+        button.disabled = true;
+        try {
+            if (videoId) {
+                this.addYouTubeVideos([await this.youtube.resolveVideo(videoId)]);
+            }
+            else {
+                if (!this.youtube.hasKey()) {
+                    this.toast("Para importar una playlist necesitas la API key de YouTube", "warn");
+                    document.querySelector("#yt-key-details").open = true;
+                    return;
+                }
+                this.toast("Importando playlist…", "info");
+                const videos = await this.youtube.playlist(playlistId);
+                if (!videos.length)
+                    return this.toast("La playlist no tiene videos reproducibles", "warn");
+                this.addYouTubeVideos(videos);
+            }
+            input.value = "";
+        }
+        catch (err) {
+            this.toast(err.message, "warn");
+        }
+        finally {
+            button.disabled = false;
+        }
+    }
+    /** Adds YouTube videos to the list, respecting the chosen position. */
+    addYouTubeVideos(videos) {
+        const atStart = document.querySelector("#yt-position").value === "start";
+        videos.forEach((v, i) => {
+            const song = {
+                id: uid(),
+                title: v.title,
+                artist: v.channel,
+                duration: v.duration,
+                hue: hueFrom(v.title),
+                src: "",
+                youtubeId: v.id,
+            };
+            this.player.add(song, atStart ? { kind: "index", index: i } : { kind: "end" });
+        });
+        this.toast(videos.length === 1
+            ? `“${videos[0].title}” agregada ${atStart ? "al inicio" : "al final"}`
+            : `${videos.length} canciones de YouTube agregadas`, "success");
+    }
+    // =========================================================
+    //  Editing / releasing songs
+    // =========================================================
     openEdit(node) {
         const dialog = document.querySelector("#edit-dialog");
         this.editingId = node.value.id;
@@ -325,6 +482,7 @@ class App {
         }
         dialog.close();
     }
+    /** Frees the resources of a removed song (temporary URL + stored file). */
     releaseSong(song) {
         if (!song.local)
             return;
@@ -338,17 +496,25 @@ class App {
         }
         void this.files.clear();
     }
+    // =========================================================
+    //  Rendering
+    // =========================================================
     render() {
         this.renderStats();
         this.renderPlayer();
         this.renderPlaylist();
         this.renderChain();
         this.renderFormHints();
+        this.renderYouTubeFrame();
     }
     renderStats() {
         const p = this.player;
         this.setText("#stat-count", String(p.playlist.size));
         this.setText("#stat-duration", formatTotal(p.totalDuration()));
+    }
+    /** The YouTube player must stay visible while a YouTube song is current. */
+    renderYouTubeFrame() {
+        document.querySelector("#yt-wrap").hidden = !this.player.current?.value.youtubeId;
     }
     renderFormHints() {
         const max = this.player.playlist.size + 1;
@@ -358,6 +524,13 @@ class App {
     }
     cover(hue) {
         return `--h:${hue}`;
+    }
+    /** Cover style of a song: YouTube thumbnail when available, gradient otherwise. */
+    coverStyle(song) {
+        const base = this.cover(song.hue);
+        return song.youtubeId
+            ? `${base};background-image:url(https://i.ytimg.com/vi/${song.youtubeId}/default.jpg);background-size:cover;background-position:center`
+            : base;
     }
     renderPlayer() {
         const p = this.player;
@@ -399,6 +572,7 @@ class App {
     `;
         this.updateProgress();
     }
+    /** Updates only the progress bar (called while the song plays). */
     updateProgress() {
         const p = this.player;
         const total = p.current?.value.duration ?? 0;
@@ -440,8 +614,8 @@ class App {
           <li class="song ${isCurrent ? "current" : ""}">
             <button class="song-main" data-action="play-node" data-id="${s.id}" title="Reproducir">
               <span class="song-idx">${idxCell}</span>
-              <span class="mini-cover" style="${this.cover(s.hue)}"></span>
-              <span class="song-info"><strong>${escapeHtml(s.title)}</strong><small>${escapeHtml(s.artist)}${s.local ? " · en tu PC" : ""}</small></span>
+              <span class="mini-cover" style="${this.coverStyle(s)}"></span>
+              <span class="song-info"><strong>${escapeHtml(s.title)}</strong><small>${escapeHtml(s.artist)}${s.local ? " · en tu PC" : ""}${s.youtubeId ? " · YouTube" : ""}</small></span>
               <span class="song-dur">${formatDuration(s.duration)}</span>
             </button>
             <div class="song-actions">
@@ -458,6 +632,7 @@ class App {
             ? items.join("")
             : `<li class="empty-state"><strong>Sin resultados</strong><span>Ninguna canción coincide con tu búsqueda.</span></li>`;
     }
+    /** Draws the internal structure: NULL ⇄ node ⇄ node ⇄ NULL */
     renderChain() {
         const p = this.player;
         const host = document.querySelector("#chain");
@@ -489,12 +664,16 @@ class App {
         parts.push('<span class="null-box">NULL</span>');
         host.innerHTML = parts.join("");
     }
+    // =========================================================
+    //  Persistence (localStorage + IndexedDB)
+    // =========================================================
     save() {
         try {
+            // blob: URLs of local files are useless in another session, so they are not saved.
             const songs = this.player.playlist.toArray().map((s) => (s.local ? { ...s, src: "" } : s));
             localStorage.setItem(STORAGE_KEY, JSON.stringify({ songs, currentId: this.player.current?.value.id, defaultsVersion: DEFAULTS_VERSION }));
         }
-        catch { }
+        catch { /* almacenamiento no disponible: se ignora */ }
     }
     readSaved() {
         try {
@@ -508,6 +687,11 @@ class App {
             return null;
         }
     }
+    /**
+     * Rebuilds the saved list, recovering local files from IndexedDB.
+     * If the default-tracks version changed, the new defaults are used
+     * and the songs the user added are kept (at the end).
+     */
     async hydrate(saved, version) {
         const result = [];
         for (const song of saved) {
@@ -516,7 +700,7 @@ class App {
                 if (blob)
                     result.push({ ...song, src: URL.createObjectURL(blob) });
             }
-            else if (song.src) {
+            else if (song.src || song.youtubeId) {
                 result.push(song);
             }
         }
@@ -524,6 +708,9 @@ class App {
             return result;
         return [...this.defaultSongs(), ...result.filter((s) => !s.builtin)];
     }
+    // =========================================================
+    //  UI helpers
+    // =========================================================
     setText(selector, text) {
         const el = document.querySelector(selector);
         if (el)
@@ -538,6 +725,6 @@ class App {
         window.setTimeout(() => {
             el.classList.add("out");
             window.setTimeout(() => el.remove(), 300);
-        }, 2600);
+        }, type === "warn" ? 8000 : 2600);
     }
 }
