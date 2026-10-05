@@ -1,0 +1,12 @@
+{
+  "name": "reproductor-musica-listas-dobles",
+  "version": "1.0.0",
+  "description": "Taller de Listas Dobles: reproductor de música en TypeScript",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
