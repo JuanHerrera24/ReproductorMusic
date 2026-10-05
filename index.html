@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reproductor de Música · Taller Listas Dobles</title>
+  <meta name="description" content="Reproductor de música en TypeScript implementado con una lista doblemente enlazada." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><i></i><i></i><i></i></div>
+
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <div>
+          <h1>Reproductor de Música</h1>
+          <p>Taller de Listas Dobles · TypeScript</p>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span id="stat-count">0</span><small>canciones</small></div>
+        <div class="stat"><span id="stat-duration">0 s</span><small>duración total</small></div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="left-col">
+        <article class="card player" id="player" aria-live="polite"></article>
+
+        <article class="card files-card">
+          <h2 class="card-title">Música de tu PC</h2>
+          <button class="dropzone" type="button" data-action="pick-files">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+            <strong>Elegir archivos de audio</strong>
+            <span>o arrástralos y suéltalos aquí · sin límite de canciones</span>
+          </button>
+          <input id="file-input" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac,.opus" multiple hidden />
+          <label class="field inline">
+            <span>Agregarlas</span>
+            <select id="files-position">
+              <option value="end">Al final de la lista</option>
+              <option value="start">Al inicio de la lista</option>
+            </select>
+          </label>
+        </article>
+
+        <article class="card add-card">
+          <h2 class="card-title">Agregar por enlace</h2>
+          <form id="add-form" autocomplete="off">
+            <label class="field">
+              <span>Título</span>
+              <input id="f-title" type="text" placeholder="Nombre de la canción" maxlength="80" required />
+            </label>
+            <label class="field">
+              <span>Artista (opcional)</span>
+              <input id="f-artist" type="text" placeholder="Nombre del artista" maxlength="60" />
+            </label>
+            <label class="field">
+              <span>Enlace directo al .mp3</span>
+              <input id="f-url" type="url" placeholder="https://…/cancion.mp3" required />
+            </label>
+            <label class="field">
+              <span>¿Dónde insertarla?</span>
+              <select id="f-position">
+                <option value="end">Al final de la lista</option>
+                <option value="start">Al inicio de la lista</option>
+                <option value="index">En una posición específica…</option>
+              </select>
+            </label>
+            <label class="field" id="f-index-field" hidden>
+              <span>Posición (1 = primera)</span>
+              <input id="f-index" type="number" min="1" value="1" />
+            </label>
+            <button class="btn primary" type="submit">+ Agregar a la lista</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="card playlist-card">
+        <div class="playlist-head">
+          <h2 class="card-title">Lista de reproducción</h2>
+          <div class="playlist-tools">
+            <input id="search" class="search" type="search" placeholder="Buscar canción o artista…" aria-label="Buscar" />
+            <button class="btn ghost" data-action="restore" title="Volver a la lista por defecto">Restaurar</button>
+            <button class="btn ghost danger" data-action="clear">Vaciar</button>
+          </div>
+        </div>
+        <ul class="playlist" id="playlist"></ul>
+      </section>
+    </main>
+
+    <section class="card chain-card">
+      <div class="chain-head">
+        <h2 class="card-title">Estructura interna · lista doblemente enlazada</h2>
+        <p>Cada nodo guarda un puntero al anterior (<code>prev</code>) y al siguiente (<code>next</code>). Adelantar y retroceder son saltos de un nodo.</p>
+      </div>
+      <div class="chain" id="chain"></div>
+    </section>
+
+    <footer class="footer">Taller Listas Dobles · Reproduce audio real · Hecho con TypeScript</footer>
+  </div>
+
+  <div class="drop-overlay" aria-hidden="true"><div><strong>Suelta tu música aquí</strong><span>Se agregará a la lista de reproducción</span></div></div>
+
+  <dialog id="edit-dialog" class="dialog">
+    <form method="dialog">
+      <h2 class="card-title">Editar canción</h2>
+      <label class="field"><span>Título</span><input id="e-title" type="text" maxlength="80" required /></label>
+      <label class="field"><span>Artista</span><input id="e-artist" type="text" maxlength="60" /></label>
+      <div class="dialog-actions">
+        <button class="btn ghost" type="button" data-close>Cancelar</button>
+        <button class="btn primary" type="submit">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="dist/types.js"></script>
+  <script src="dist/utils.js"></script>
+  <script src="dist/storage.js"></script>
+  <script src="dist/DoublyLinkedList.js"></script>
+  <script src="dist/MusicPlayer.js"></script>
+  <script src="dist/defaultTracks.js"></script>
+  <script src="dist/App.js"></script>
+  <script src="dist/main.js"></script>
+</body>
+</html>
