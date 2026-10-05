@@ -503,7 +503,6 @@ class App {
         this.renderStats();
         this.renderPlayer();
         this.renderPlaylist();
-        this.renderChain();
         this.renderFormHints();
         this.renderYouTubeFrame();
     }
@@ -631,38 +630,6 @@ class App {
         host.innerHTML = items.length
             ? items.join("")
             : `<li class="empty-state"><strong>Sin resultados</strong><span>Ninguna canción coincide con tu búsqueda.</span></li>`;
-    }
-    /** Draws the internal structure: NULL ⇄ node ⇄ node ⇄ NULL */
-    renderChain() {
-        const p = this.player;
-        const host = document.querySelector("#chain");
-        const arrow = '<span class="link" aria-hidden="true"><svg viewBox="0 0 40 16"><path d="M2 5h34m0 0l-5-4m5 4l-5 4M38 11H4m0 0l5-4m-5 4l5 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
-        if (p.playlist.isEmpty()) {
-            host.innerHTML = `<span class="null-box">NULL</span>${arrow}<span class="null-box">NULL</span>`;
-            return;
-        }
-        const parts = ['<span class="null-box">NULL</span>', arrow];
-        let i = 0;
-        for (const node of p.playlist.nodes()) {
-            const tags = [
-                node === p.playlist.head ? '<em class="tag head">HEAD</em>' : "",
-                node === p.playlist.tail ? '<em class="tag tail">TAIL</em>' : "",
-                node === p.current ? '<em class="tag now">ACTUAL</em>' : "",
-            ].join("");
-            parts.push(`
-        <button class="node ${node === p.current ? "current" : ""}" data-action="play-node" data-id="${node.value.id}" title="${escapeHtml(node.value.title)}">
-          <span class="node-tags">${tags}</span>
-          <span class="node-body">
-            <span class="ptr">${node.prev ? "prev" : "∅"}</span>
-            <span class="data"><b>${escapeHtml(node.value.title)}</b><small>posición ${i}</small></span>
-            <span class="ptr">${node.next ? "next" : "∅"}</span>
-          </span>
-        </button>`);
-            parts.push(arrow);
-            i++;
-        }
-        parts.push('<span class="null-box">NULL</span>');
-        host.innerHTML = parts.join("");
     }
     // =========================================================
     //  Persistence (localStorage + IndexedDB)
